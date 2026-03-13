@@ -1,5 +1,6 @@
 #Emotions
 Exercise Description
+
 Emotion classification is an important problem in machine learning, where the goal is to identify the emotion expressed by a face in an image. The FERPlus (Facial Expression Recognition Plus) model is one of the most successful models for this problem, and can classify facial images into 8 categories: neutral, joy, surprise, sadness, anger, disgust, fear, and contempt.
 Objective of the Exercise
 In this exercise, you are asked to generate two 112x112-pixel grayscale facial images:
@@ -8,3 +9,137 @@ Second image: Must be classified as happy (joy class)
 The key point: the two images must have the smallest possible pixel distance between them. In other words, we want to show how we can "trick" the classifier by altering the image in the smallest possible way so that the image changes category.
 How It Works
 You can upload images from your computer or mobile device, take a photo, or generate the images programmatically. Each image is automatically converted to grayscale and resized to 112x112 pixels. The FERPlus model runs in real time in your browser and shows you the prediction along with the confidence level.
+1. Download the files:
+
+from gdown import download
+
+download(id='10iQQcGN80wqRMjGeItnklsODP54hHydP', output='model_ferplus.pth', quiet=False)
+download(id='1g56Vxvk506MV4mxf3489WI-KBgmKiRLw', output='angry.png', quiet=False)
+download(id='1ej3OzvPL_Itck2v3Atln671l-RfrvCss', output='happy.png', quiet=False)
+download(id='1-2C4lT5WdAXSleGOG0KHtTeYfyDonhJn', output='neutral.png', quiet=False)
+
+
+2. Load model:
+import torch
+from torchvision import models
+
+device = "cuda" if torch.cuda.is_available() else "cpu"
+
+class ReshapeAndScale255(torch.nn.Module):
+    def __init__(self): super().__init__()
+    def forward(self, x):
+        if len(x.shape) == 2: x = x.unsqueeze(0)
+        return ( x.unsqueeze(1) / 255 ).clamp(0,1)
+model = torch.nn.Sequential(
+    ReshapeAndScale255(),
+    models.shufflenet_v2_x1_0(num_classes = 8)
+)
+model[1].conv1[0] = torch.nn.Conv2d(1, 24, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), bias=False)
+model[1].load_state_dict(torch.load('model_ferplus.pth', map_location=device))
+model.eval()
+
+emotion_labels = [
+    "neutral",    # 0
+    "happy",      # 1
+    "surprise",   # 2
+    "sad",        # 3
+    "angry",      # 4
+    "disgust",    # 5
+    "fear",       # 6
+    "contempt"    # 7
+]
+
+3. We load the image as a torch.
+Tensor and the helper functions
+An image corresponds to a matrix with 112 rows and 112 columns. Each value in the matrix ranges from 0 to 255
+
+loadImage: Loads an image when given the file path.
+tensorToImage: Converts a PyTorch Tensor into a regular image.
+
+from PIL import Image
+import numpy as np
+
+def loadImage(filename):
+    img = Image.open(filename).convert("L").resize( size=(112,112) )
+    img_data = np.array(img).astype(np.float32)
+    return torch.tensor(img_data)
+
+def tensorToImage(tensor):
+    return Image.fromarray(tensor.clamp(0,255).detach().reshape(112,112).numpy().astype(np.uint8))
+
+Xoriginal = loadImage('angry.png')
+print(Xoriginal)
+tensorToImage(Xoriginal)
+
+
+
+4. We change the foto and we see the new emotion.
+
+#TODO, example below
+easy_first = loadImage('neutral.png')
+easy_second = loadImage('neutral.png')
+easy_second[85:87,40:70] = 255
+
+medium_first = loadImage('angry.png')
+medium_second = loadImage('angry.png')
+
+
+hard_first = loadImage('happy.png')
+hard_second = loadImage('happy.png')
+
+The `compare_images` function will help you quickly view the two images alongside the model's predictions.
+
+IMPORTANT!!
+
+Before being fed into the model, the images are rounded to the nearest integer pixel values. For example, if a pixel has a value of 225.3, it becomes 225.
+
+def compare_images(A, B):
+    predictionA = model(A.clamp(0,255).round()).squeeze().softmax(-1)
+    predictionB = model(B.clamp(0,255).round()).squeeze().softmax(-1)
+
+    display(tensorToImage(A))
+    print("predictions A:")
+    for emotion, probability in zip(emotion_labels, predictionA):
+        print(f"{probability*100:8.1f}% - {emotion}")
+
+    emotionA = emotion_labels[predictionA.argmax()]
+    print(f"emotion A = {emotionA}\n")
+
+    display(tensorToImage(B))
+    print("predictions B:")
+    for emotion, probability in zip(emotion_labels, predictionB):
+        print(f"{probability*100:8.1f}% - {emotion}")
+
+    emotionB = emotion_labels[predictionB.argmax()]
+    print(f"emotion B = {emotionB}\n")
+
+    distance = (A.round() - B.round()).abs().sum().int().item()
+    print(f"distance = {distance}")
+
+
+compare_images(easy_first, easy_second)
+
+5. Save answers to submit to the site
+
+import json
+
+def toList(tensor):
+    return tensor.clamp(0,255).round().int().tolist()
+
+answers = {
+    "easy": {
+        "first": toList(easy_first),
+        "second": toList(easy_second)
+    },
+    "medium": {
+        "second": toList(medium_second),
+    },
+    "hard": {
+        "first": toList(hard_first),
+    }
+}
+with open("answers.json", "w") as f:
+    json.dump(answers, f)
+
+from google.colab import files
+files.download('answers.json')
