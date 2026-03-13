@@ -1,0 +1,314 @@
+Next Movie
+Exercise Description
+Have you ever wondered how recommendation systems work to find the perfect movie for you? Behind these services lies a powerful technique: vector embeddings.
+
+In this exercise, you’ll explore how recommendation systems use embeddings to find movies that match your interests. When you type a query like “science fiction with action,” the system converts both your query and each movie into vectors in a multidimensional space. Using cosine similarity, the system finds the movies closest to your query—a form of approximate search that enables fast and efficient retrieval.
+
+The interface uses the multilingual-e5-small model to generate 384-dimensional embeddings from queries. Similarly, each movie already has a pre-computed embedding based on its title and description.
+
+Challenge
+You are given a target permutation — the first 5 movies we want to appear at the top of the results. Your goal is to find an embedding (a 384-dimensional vector) that will rank the movies so that these 5 movies appear first, and in the correct order!
+
+How well can you "trick" the system? Can you find the perfect embedding that will bring the right movies to the top?
+
+Note: The interface needs to download the model weights, which are hundreds of MB in size. The initial download may take some time.
+
+Scoring System
+The scoring system is based on classification accuracy and the score difference between consecutive movies:
+
+Base Score (up to 50 points):
+
+If a target movie is in the top 5 positions: 5 points
+If a target movie is in the correct position: 10 points (replaces the 5 points)
+Maximum base score: 50 points (5 movies × 10 points)
+Bonus (up to 50 points):
+
+Calculated only if all 5 target films are in the top 5 positions and in the correct order
+Based on the minimum score difference between consecutive films (1st-2nd, 2nd-3rd, 3rd-4th, 4th-5th, 5th-6th)
+If the minimum difference reaches the level threshold: full bonus of 50 points (total = 100%)
+Otherwise: linear scale based on the level threshold
+
+1. LOAD DATA:
+
+import json
+import os
+from gdown import download
+import torch
+def download_data(id, filename):
+    if not os.path.exists(filename):
+        download(id=id, output=filename, quiet=False)
+    with open(filename, 'r', encoding='utf-8') as f:
+        return json.load(f)
+movies = download_data('1bwVnwW9FL4-pMUpOTzXOomHc150NncmW', 'movies.json')
+levels = download_data('1O_vJ7aoWfakDKFCZb0zc51BjzUoLJrCW', 'levels.json')
+embeddings = torch.tensor( download_data('1E1lHQQ09yQWSw-YWmsnRt8ukbV7-Gznr', 'embeddings.json') )
+
+2. We initialize the model
+
+from sentence_transformers import SentenceTransformer
+
+model = SentenceTransformer("intfloat/multilingual-e5-small")
+def embed_query(query):
+    return model.encode([query], convert_to_numpy=False, convert_to_tensor=True)[0]
+
+
+On the other hand, we can usd the model which is closest to the actual implementation of the page 
+
+%pip install onnxruntime
+import onnxruntime as ort
+from transformers import AutoTokenizer
+import transformers
+import torch
+import requests
+
+url = "https://huggingface.co/Xenova/multilingual-e5-small/resolve/main/onnx/model_quantized.onnx"
+resp = requests.get(url)
+resp.raise_for_status()
+
+with open("model_quantized.onnx", "wb") as f:
+    f.write(resp.content)
+tokenizer = AutoTokenizer.from_pretrained("Xenova/multilingual-e5-small")
+session = ort.InferenceSession("model_quantized.onnx")
+
+def embed_query(q):
+    inp = tokenizer([q], return_token_type_ids=True)
+    outputs = session.run(["last_hidden_state"], dict(inp))
+    emb = torch.tensor( outputs[0] ).float().mean(1)
+    emb /= emb.norm(dim=-1)
+    return emb[0]
+
+3. Solve spacific level
+
+answers = {}
+levelid = 'level4' # 'level2' / 'level3' / 'level4'
+level = levels[levelid]
+target_order = torch.tensor([0,1,2,3,4])
+E = embeddings[ level ] # embeddings ολων των ταινιών του επιπέδου
+E.shape
+
+
+# Είτε μέσω κάποιου ερωτήματος
+query = "θρίλερ, έγκλημα, μυστήριο, δράμα, αϋπνία, ενοχή, συνείδηση, συγκάλυψη, δολοφονία, Αλάσκα"
+emb = embed_query(query)
+emb.shape
+
+# Είτε απευθείας
+emb = torch.randn(384)
+emb.shape
+
+# Ομοιότητα και Διάταξη ταινιών (φθίνουσα διάταξη με similarity)
+
+similarity = torch.cosine_similarity(E, emb)
+ranking = similarity.argsort(descending=True)
+similarity[ranking], ranking
+
+# TODO: Find a query for each lever, so that for each level first 5 movies are the 0,1,2,3,4...
+# torch.all( ranking[:5] == target_order ).item()
+
+# ============================================================
+# SOLUTION FOR ALL LEVELS AT ONCE
+# ============================================================
+import torch
+import json
+
+# Make sure you already have: movies, levels, embeddings από το βήμα 1
+
+def optimize_embedding(E, target_order, n_steps=5000, lr=0.02, n_restarts=5):
+    """
+    Βρίσκει το βέλτιστο embedding με gradient descent + multiple restarts.
+    """
+    N, D = E.shape
+    non_targets = [i for i in range(N) if i not in target_order.tolist()]
+    non_targets_tensor = torch.tensor(non_targets)
+    
+    best_emb = None
+    best_min_diff = -999.0
+    best_correct = False
+    
+    for restart in range(n_restarts):
+        # Διαφορετική αρχικοποίηση σε κάθε restart
+        if restart == 0:
+            # Restart 0: μέσος όρος targets
+            emb_init = E[target_order].mean(0).clone()
+        elif restart == 1:
+            # Restart 1: weighted μέσος (πιο βάρος στις πρώτες)
+            weights = torch.tensor([5.0, 4.0, 3.0, 2.0, 1.0])
+            weights /= weights.sum()
+            emb_init = (E[target_order] * weights.unsqueeze(1)).sum(0).clone()
+        else:
+            # Υπόλοιποι restarts: τυχαία διαταραχή γύρω από τον μέσο όρο
+            emb_init = E[target_order].mean(0).clone() + torch.randn(D) * 0.1
+        
+        emb = emb_init.detach().requires_grad_(True)
+        optimizer = torch.optim.Adam([emb], lr=lr)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, n_steps)
+        
+        local_best_emb = (emb / emb.norm()).detach().clone()
+        local_best_min_diff = -999.0
+        local_best_correct = False
+        
+        for step in range(n_steps):
+            optimizer.zero_grad()
+            
+            emb_norm = emb / emb.norm()
+            sim = torch.cosine_similarity(E, emb_norm.unsqueeze(0))
+            
+            target_sims = sim[target_order]        # [5] - similarities στόχων
+            non_target_sims = sim[non_targets_tensor]  # similarities υπολοίπων
+            
+            # Loss 1: Σωστή φθίνουσα σειρά στόχων
+            order_loss = torch.relu(target_sims[1:] - target_sims[:-1] + 0.02).sum()
+            
+            # Loss 2: Ο τελευταίος στόχος να είναι ΠΑΝΩ από ΟΛΕΣ τις υπόλοιπες
+            margin = 0.08
+            margin_loss = torch.relu(non_target_sims - target_sims[-1] + margin).sum()
+            
+            # Loss 3: Μεγιστοποίηση gap μεταξύ 5ου στόχου και 6ης ταινίας
+            top6_sim = sim.topk(6).values
+            gap_bonus = -(top6_sim[4] - top6_sim[5])  # θέλουμε μεγάλο gap
+            
+            # Loss 4: Μεγιστοποίηση ελάχιστης διαφοράς μεταξύ διαδοχικών
+            consec_diffs = target_sims[:-1] - target_sims[1:]  # [4] θετικές αν σωστή σειρά
+            min_diff_loss = -consec_diffs.min()  # θέλουμε να μεγιστοποιήσουμε
+            
+            loss = (order_loss * 20 + 
+                    margin_loss * 10 + 
+                    gap_bonus * 5 + 
+                    min_diff_loss * 3)
+            
+            loss.backward()
+            optimizer.step()
+            scheduler.step()
+            
+            # Αξιολόγηση κάθε 50 steps
+            if step % 50 == 0:
+                with torch.no_grad():
+                    en = emb / emb.norm()
+                    s = torch.cosine_similarity(E, en.unsqueeze(0))
+                    rank = s.argsort(descending=True)
+                    correct = torch.all(rank[:5] == target_order).item()
+                    
+                    if correct:
+                        diffs = (s[target_order[:-1]] - s[target_order[1:]]).min().item()
+                        gap_56 = (s[rank[4]] - s[rank[5]]).item()
+                        total_min_diff = min(diffs, gap_56)
+                        
+                        if total_min_diff > local_best_min_diff:
+                            local_best_min_diff = total_min_diff
+                            local_best_emb = en.clone()
+                            local_best_correct = True
+        
+        # Ενημέρωση global best
+        if local_best_correct and local_best_min_diff > best_min_diff:
+            best_min_diff = local_best_min_diff
+            best_emb = local_best_emb.clone()
+            best_correct = True
+            print(f"  Restart {restart}: ✅ Νέο καλύτερο! min_diff={best_min_diff:.4f}")
+        elif not best_correct:
+            # Κράτα ό,τι έχουμε έστω κι αν δεν είναι σωστό
+            best_emb = local_best_emb.clone()
+            print(f"  Restart {restart}: ❌ Δεν βρέθηκε σωστή σειρά")
+        else:
+            print(f"  Restart {restart}: min_diff={local_best_min_diff:.4f} (δεν βελτίωσε)")
+    
+    return best_emb, best_correct, best_min_diff
+
+
+def evaluate(emb, E, target_order, level, movies):
+    """Εκτυπώνει αποτελέσματα για ένα level."""
+    with torch.no_grad():
+        emb_norm = emb / emb.norm()
+        similarity = torch.cosine_similarity(E, emb_norm.unsqueeze(0))
+        ranking = similarity.argsort(descending=True)
+        
+        print("  Top 6 ταινίες:")
+        for i, idx in enumerate(ranking[:6]):
+            title = movies[level[idx.item()]]['title']
+            sim_val = similarity[idx].item()
+            if i < 5:
+                marker = "✅" if idx.item() == target_order[i].item() else "❌"
+            else:
+                marker = "  "
+            print(f"    {i+1}. {marker} {title} (sim={sim_val:.4f})")
+        
+        correct = torch.all(ranking[:5] == target_order).item()
+        diffs = -similarity[ranking].diff()[:5]
+        print(f"  Σωστή σειρά: {'✅' if correct else '❌'}")
+        print(f"  Διαφορές: {', '.join(f'{d:.4f}' for d in diffs)}")
+        print(f"  Ελάχιστη διαφορά: {diffs.min():.4f}")
+        return emb_norm
+
+
+# ============================================================
+# MAIN LOOP - FOR ALL LEVELS
+# ============================================================
+answers = {}
+target_order = torch.tensor([0, 1, 2, 3, 4])
+
+for levelid in ['level1', 'level2', 'level3', 'level4']:
+    print(f"\n{'='*50}")
+    print(f"🎬 Επεξεργασία {levelid}...")
+    print(f"{'='*50}")
+    
+    level = levels[levelid]
+    E = embeddings[level]
+    
+    # Εκτύπωση στόχων
+    print("Στόχοι:")
+    for i in target_order:
+        print(f"  {i.item()+1}. {movies[level[i.item()]]['title']}")
+    
+    print("\nΒελτιστοποίηση...")
+    emb, correct, min_diff = optimize_embedding(
+        E, target_order, 
+        n_steps=5000, 
+        lr=0.02, 
+        n_restarts=5
+    )
+    
+    print(f"\nΑποτέλεσμα {levelid}:")
+    emb_final = evaluate(emb, E, target_order, level, movies)
+    
+    answers[levelid] = {'embedding': emb_final.tolist()}
+
+
+
+# ============================================================
+# SAVE
+# ============================================================
+answers = {}
+answers[levelid] = {'embedding': emb.tolist()}
+with open('answers.json', 'w') as f:
+    json.dump(answers, f)
+
+from google.colab import files
+files.download('answers.json')
+
+
+
+# ...και οι διαδοχικές διαφορές να είναι όσο το δυνατόν μεγαλύτερες
+diffs = -similarity[ranking].diff()[:5]
+print('Διαδοχικές Διαφορές {:.4f}, {:.4f}, {:.4f}, {:.4f}, {:.4f}'.format(*diffs) )
+print('Ελάχιστη Διαφορά {:.4f}'.format(diffs.min()))
+
+ # answers[levelid] = {'embedding': emb.tolist()}
+
+4. Αποθηκεύουμε τις απαντήσεις για υποβολή στο site
+import json
+with open('answers.json', 'w') as f:
+    json.dump(answers, f)
+
+from google.colab import files
+files.download('answers.json')
+
+===============
+# SAVE
+# ============================================================
+
+print("\n📁 Αποθήκευση answers.json...")
+with open('answers.json', 'w') as f:
+    json.dump(answers, f)
+
+from google.colab import files
+files.download('answers.json')
+print("✅ Έτοιμο!")
