@@ -1,0 +1,10 @@
+#Emotions
+Exercise Description
+Emotion classification is an important problem in machine learning, where the goal is to identify the emotion expressed by a face in an image. The FERPlus (Facial Expression Recognition Plus) model is one of the most successful models for this problem, and can classify facial images into 8 categories: neutral, joy, surprise, sadness, anger, disgust, fear, and contempt.
+Objective of the Exercise
+In this exercise, you are asked to generate two 112x112-pixel grayscale facial images:
+First image: Must be classified as not happy (i.e., any class other than joy)
+Second image: Must be classified as happy (joy class)
+The key point: the two images must have the smallest possible pixel distance between them. In other words, we want to show how we can "trick" the classifier by altering the image in the smallest possible way so that the image changes category.
+How It Works
+You can upload images from your computer or mobile device, take a photo, or generate the images programmatically. Each image is automatically converted to grayscale and resized to 112x112 pixels. The FERPlus model runs in real time in your browser and shows you the prediction along with the confidence level.
