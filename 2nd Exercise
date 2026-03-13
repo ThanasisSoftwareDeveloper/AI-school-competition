@@ -1,0 +1,52 @@
+MNIST CAPTCHA
+This starter notebook focuses on solving the MNIST CAPTCHA problem. The goal is to design a system that recognizes the digits and the operator from an "AB ± CD" image in order to calculate the final result. The notebook provides the basic steps: library imports, downloading the MNIST dataset, and a simple classifier, so you can continue with your own implementations.
+This notebook is read-only—so you must save a copy to your own Google Drive.
+Importing Libraries
+We need NumPy for array manipulation and PyTorch for creating and training neural networks. We’ll also use torchvision to download the MNIST dataset along with basic transformations.
+
+import os
+def showImage(tensor):
+    transform = transforms.ToPILImage()
+    return transform(1-tensor)
+def readExamples(file_name):
+    transform = transforms.ToTensor()
+    image = Image.open(file_name + '.png').convert('L')
+    tensor = 1-transform(image)
+    X = tensor.reshape(-1,1,28,140)
+    if os.path.exists(file_name + '.txt'):
+        with open(file_name + '.txt') as f:
+            lines = f.readlines()
+    else:
+        lines = ['']*X.shape[0]
+ return X, lines
+
+examples, results = readExamples('private-noisy') # or 'public-noisy' or 'private-clean' or 'private-noisy'
+print(results[0])
+showImage(examples[0])
+
+
+transform = transforms.ToTensor()
+train_dataset = datasets.MNIST(root="./data", train=True, download=True, transform=transform)
+test_dataset = datasets.MNIST(root="./data", train=False, download=True, transform=transform)
+
+print(f"Train samples: {len(train_dataset)}")
+print(f"Test samples: {len(test_dataset)}")
+
+100%|██████████| 9.91M/9.91M [00:00<00:00, 59.2MB/s]
+100%|██████████| 28.9k/28.9k [00:00<00:00, 1.69MB/s]
+100%|██████████| 1.65M/1.65M [00:00<00:00, 14.4MB/s]
+100%|██████████| 4.54k/4.54k [00:00<00:00, 2.68MB/s]Train samples: 60000
+Test samples: 10000
+
+image, label = train_dataset[0]
+print(label)
+showImage(image)
+The Basic Idea
+To automate the solving of MNIST-CAPTCHAs, we need to train a neural network that can decode the math problem from the MNIST digits.
+
+The first step is to train a neural network that can recognize the digits one by one.
+
+The next step is to extract the digits from the CAPTCHA problem, use our trained neural network, and then calculate the answer once we have identified the correct numbers.
+
+Simple Neural Network
+As a minimal starting point, we define a model with a single linear layer nn.Linear(28*28, 10) that flattens the pixels and produces logits for the 10 classes of MNIST.
