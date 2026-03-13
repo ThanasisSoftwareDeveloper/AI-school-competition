@@ -50,3 +50,89 @@ The next step is to extract the digits from the CAPTCHA problem, use our trained
 
 Simple Neural Network
 As a minimal starting point, we define a model with a single linear layer nn.Linear(28*28, 10) that flattens the pixels and produces logits for the 10 classes of MNIST.
+
+class SimpleMNISTModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.fc = nn.Linear(28 * 28, 10)
+
+
+    def forward(self, x):
+        x = x.reshape(x.size(0), -1)
+        return self.fc(x)
+
+model = SimpleMNISTModel()
+print(model)
+SimpleMNISTModel(
+  (fc): Linear(in_features=784, out_features=10, bias=True)
+)
+Training Implementation
+In the next step, you will need to write your own training function to fit the model to the data and extend it to solve the MNIST CAPTCHA.
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model.to(device)
+
+
+# TODO: Γράψτε τον κώδικα εκπαίδευσης του μοντέλου
+optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+criterion = nn.CrossEntropyLoss()
+train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=64, shuffle=True)
+
+model.train()
+for epoch in range(5):
+    total_loss = 0
+    for images, labels in train_loader:
+        images, labels = images.to(device), labels.to(device)
+        optimizer.zero_grad()
+        outputs = model(images)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimizer.step()
+        total_loss += loss.item()
+    print(f"Epoch {epoch+1}, Loss: {total_loss/len(train_loader):.4f}")
+
+# Based on the trained model, implement a function that calculates the result in the given example.
+ #TODO
+def detect_operator(op_tile):
+    img = op_tile.squeeze().cpu()
+    center = img[8:20, 8:20]
+    vertical   = center[:, 4:8].mean().item()
+    horizontal = center[4:8, :].mean().item()
+    if horizontal < 0.05:
+        return '+'
+    ratio = vertical / (horizontal + 1e-6)
+    return '+' if ratio > 0.35 else '-'
+
+def predict(model, x):
+    if x.dim() == 4:
+        x = x.squeeze(0)  # (1, 28, 140)
+
+    tiles = [x[:, :, i*28:(i+1)*28] for i in range(5)]
+
+    model.eval()
+    def pred_digit(tile):
+        with torch.no_grad():
+            return model(tile.unsqueeze(0).to(device)).argmax(1).item()
+
+    A  = pred_digit(tiles[0])
+    B  = pred_digit(tiles[1])
+    op = detect_operator(tiles[2])   # η συνάρτηση από το final notebook
+    C  = pred_digit(tiles[3])
+    D  = pred_digit(tiles[4])
+    AB = A * 10 + B
+    CD = C * 10 + D
+    result = AB + CD if op == '+' else AB - CD
+    return f'{AB}{op}{CD}={result}'
+    # return "37+34=71" #placeholder
+Save Answers:
+import json
+answers = {}
+for level in ['public-clean', 'public-noisy', 'private-clean', 'private-noisy']:
+    examples, _ = readExamples(level)
+    answers[level] = '\n'.join( [predict(model, example) for example in examples] )
+with open('answers.json', 'w') as f:
+    json.dump(answers, f)
+
+from google.colab import files
+files.download('answers.json')
+
+
